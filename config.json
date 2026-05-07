@@ -1,0 +1,16 @@
+{
+  "key_bindings": {
+    "up": "UP",
+    "down": "DOWN",
+    "left": "LEFT",
+    "right": "RIGHT",
+    "dash": "SPACE",
+    "pause": "ESC",
+    "confirm": "ENTER"
+  },
+  "volume": {
+    "sfx": 0.8,
+    "bgm": 0.5
+  },
+  "default_difficulty": "Normal"
+}
