@@ -5,6 +5,10 @@ import random
 import pyxel
 
 
+SCREEN_WIDTH = 160
+SCREEN_HEIGHT = 120
+FPS = 30
+
 SPR_KNIGHT = (0, 0)
 SPR_MAGE = (16, 0)
 SPR_VIKING = (32, 0)
@@ -40,6 +44,22 @@ MAX_ENEMIES = 50
 ENEMY_ACTIVE_RADIUS = 200
 ENEMY_DESPAWN_RADIUS = 500
 ENEMY_SPAWN_DISTANCE = 112
+BOSS_SPAWN_FRAMES = 30 * 60 * FPS
+BOSS_WARNING_FRAMES = 2 * FPS
+
+DASH_COOLDOWN_FRAMES = 60
+HP_REGEN_INTERVAL_FRAMES = 180
+SFX_COOLDOWN_FRAMES = 10
+WHIP_ATTACK_FRAMES = 10
+BOSS_ATTACK_INTERVAL = 120
+BOSS_SUMMON_INTERVAL = 600
+GARLIC_TICK_INTERVAL = 30
+DARK_MAGE_ATTACK_INTERVAL = 90
+SLIME_WANDER_INTERVAL = 120
+NECROMANCER_SUMMON_INTERVAL = 180
+DEMON_DASH_INTERVAL = 120
+DEMON_DASH_DURATION = 15
+SOUL_EATER_TICK_INTERVAL = 20
 
 LEVEL_XP_THRESHOLDS = [0, 5, 12, 22, 35, 52, 73, 100, 133, 173, 220, 275, 338, 410, 492]
 while len(LEVEL_XP_THRESHOLDS) <= 99:
@@ -73,6 +93,19 @@ WEAPON_DATA = {
     6: {"name": "Cross", "cooldown": 60, "damage": 7, "range": 80, "type": "projectile"},
     7: {"name": "Fire Wand", "cooldown": 55, "damage": 5, "range": 100, "type": "projectile"},
 }
+
+EVOLVED_WEAPON_DATA = {
+    8: {"name": "Bloody Tear", "base": 0, "cooldown": 40, "damage": 12, "range": 40, "type": "melee", "effect": "lifesteal"},
+    9: {"name": "Holy Wand", "base": 1, "cooldown": 35, "damage": 9, "range": 150, "type": "projectile", "effect": "pierce"},
+    10: {"name": "Death Spiral", "base": 2, "cooldown": 45, "damage": 14, "range": 80, "type": "projectile", "effect": "pierce"},
+    11: {"name": "Thousand Edge", "base": 3, "cooldown": 12, "damage": 5, "range": 120, "type": "projectile", "effect": "multi"},
+    12: {"name": "Boros Sea", "base": 4, "cooldown": 75, "damage": 12, "range": 100, "type": "projectile", "effect": "big_zone"},
+    13: {"name": "Soul Eater", "base": 5, "cooldown": 0, "damage": 4, "range": 55, "type": "aura", "effect": "heal"},
+    14: {"name": "Hyperlove", "base": 6, "cooldown": 50, "damage": 10, "range": 100, "type": "projectile", "effect": "multi_return"},
+    15: {"name": "Hellfire", "base": 7, "cooldown": 45, "damage": 9, "range": 120, "type": "projectile", "effect": "pierce_burn"},
+}
+
+EVOLUTION_MAP = {0: 8, 1: 9, 2: 10, 3: 11, 4: 12, 5: 13, 6: 14, 7: 15}
 
 MAX_WEAPON_SLOTS = 6
 MAX_PASSIVE_SLOTS = 6
@@ -119,6 +152,14 @@ UPGRADE_POOL = [
     {"type": "weapon", "id": 5, "name": "Garlic", "desc": "Damaging aura"},
     {"type": "weapon", "id": 6, "name": "Cross", "desc": "Returning boomerang"},
     {"type": "weapon", "id": 7, "name": "Fire Wand", "desc": "Exploding fireball"},
+    {"type": "weapon", "id": 8, "name": "Bloody Tear", "desc": "Evolved whip with lifesteal"},
+    {"type": "weapon", "id": 9, "name": "Holy Wand", "desc": "Evolved wand with piercing"},
+    {"type": "weapon", "id": 10, "name": "Death Spiral", "desc": "Evolved axe with piercing"},
+    {"type": "weapon", "id": 11, "name": "Thousand Edge", "desc": "Evolved knife barrage"},
+    {"type": "weapon", "id": 12, "name": "Boros Sea", "desc": "Evolved holy water zone"},
+    {"type": "weapon", "id": 13, "name": "Soul Eater", "desc": "Evolved garlic aura"},
+    {"type": "weapon", "id": 14, "name": "Hyperlove", "desc": "Evolved returning cross"},
+    {"type": "weapon", "id": 15, "name": "Hellfire", "desc": "Evolved piercing fireball"},
 ]
 
 PASSIVE_POOL = [
@@ -711,7 +752,10 @@ class App:
         self.level_up_choices = []
         self.level_up_cursor = 0
         self.boss_active = False
+        self.boss = None
         self.boss_hp = 0
+        self.boss_max_hp = 0
+        self.boss_warning_timer = 0
         self.kills = 0
         self.dash_cooldown = 0
         self.dash_invincible = 0
@@ -731,8 +775,16 @@ class App:
         self.garlic_tick_timer = 0
         self.gem_list = []
         self.debug_time_scale = 1
+        self.debug_overlay = False
+        self.score_calculated = False
+        self.is_new_high_score = False
+        self.final_score = 0
 
-        pyxel.init(160, 120, title="Vampire Survivors", fps=30)
+        pyxel.init(SCREEN_WIDTH, SCREEN_HEIGHT, title="Vampire Survivors", fps=FPS)
+        self.sfx_cooldowns = {0: 0, 1: 0, 2: 0}
+        pyxel.sound(0).set("g4 c4", "pp", "77", "n", 2)  # type: ignore[attr-defined]
+        pyxel.sound(1).set("c3 e3", "ss", "77", "n", 2)  # type: ignore[attr-defined]
+        pyxel.sound(2).set("c3 e3 g3", "ppp", "777", "nnn", 3)  # type: ignore[attr-defined]
         self._load_sprite_bank()
         pyxel.run(self.update, self.draw)
 
@@ -740,6 +792,16 @@ class App:
         image = pyxel.images[0]
         for (x, y), data in SPRITE_BANK.items():
             image.set(x, y, data)
+
+    def _tick_sfx_cooldowns(self):
+        for sound_id in self.sfx_cooldowns:
+            self.sfx_cooldowns[sound_id] = max(0, self.sfx_cooldowns[sound_id] - 1)
+
+    def play_sfx(self, sound_id):
+        if self.sfx_cooldowns.get(sound_id, 0) > 0:
+            return
+        pyxel.play(sound_id % 4, sound_id)
+        self.sfx_cooldowns[sound_id] = SFX_COOLDOWN_FRAMES
 
     def update(self):
         if self.state == "TITLE":
@@ -824,17 +886,55 @@ class App:
         self.spawn_timer = self.spawn_interval
         self.player_xp_next = int(LEVEL_XP_THRESHOLDS[self.player_level] * diff["xp_mult"])
 
+    def get_time_scaling(self):
+        minutes = self.timer_frames / (30 * 60)
+        intervals = int(minutes // 5)
+        hp_scale = 1.0 + intervals * 0.10
+        speed_scale = 1.0 + intervals * 0.10
+        spawn_scale = max(0.3, 1.0 - intervals * 0.10)
+        return hp_scale, speed_scale, spawn_scale
+
+    def update_debug_controls(self):
+        if pyxel.btnp(pyxel.KEY_F1):
+            self.debug_time_scale = min(100, self.debug_time_scale * 2)
+        elif pyxel.btnp(pyxel.KEY_F2):
+            self.debug_time_scale = max(1, self.debug_time_scale // 2)
+        elif pyxel.btnp(pyxel.KEY_F3):
+            self.debug_time_scale = 1
+        elif pyxel.btnp(pyxel.KEY_F4):
+            self.debug_overlay = not self.debug_overlay
+
     def update_playing(self):
+        self._tick_sfx_cooldowns()
+        self.update_debug_controls()
         if pyxel.btnp(pyxel.KEY_ESCAPE):
+            self.prev_state = self.state
             self.state = "PAUSED"
-        self.timer_frames += 1
+            return
+
+        self.timer_frames += self.debug_time_scale
+        self.biome = self.get_current_biome()[0]
+        if self.boss_warning_timer > 0:
+            self.boss_warning_timer -= 1
+            if self.boss_warning_timer <= 0:
+                self.start_boss_fight()
+            return
+        if self.timer_frames >= BOSS_SPAWN_FRAMES and not self.boss_active:
+            self.boss_warning_timer = BOSS_WARNING_FRAMES
+            return
+
+        self.update_active_game(allow_spawning=True)
+
+    def update_active_game(self, allow_spawning):
         self.dash_cooldown = max(0, self.dash_cooldown - 1)
         self.dash_invincible = max(0, self.dash_invincible - 1)
         self.player_invincible = max(0, self.player_invincible - 1)
+        if self.whip_attack_timer > 0:
+            self.whip_attack_timer -= 1
         if self.hp_regen > 0:
             self.hp_regen_timer += 1
-            if self.hp_regen_timer >= 180:
-                self.hp_regen_timer -= 180
+            if self.hp_regen_timer >= HP_REGEN_INTERVAL_FRAMES:
+                self.hp_regen_timer -= HP_REGEN_INTERVAL_FRAMES
                 self.player_hp = min(self.player_max_hp, self.player_hp + math.ceil(self.hp_regen))
 
         dx = 0
@@ -867,17 +967,163 @@ class App:
                 dash_y = self.facing_y / length
             self.player_x += dash_x * 40
             self.player_y += dash_y * 40
-            self.dash_cooldown = 60
+            self.dash_cooldown = DASH_COOLDOWN_FRAMES
             self.dash_invincible = 10
 
-        self.update_spawning()
+        if allow_spawning:
+            self.update_spawning()
         self.update_enemies()
+        self.update_boss_entity()
         self.update_enemy_projectiles()
         self.update_weapons()
         self.update_projectiles()
         self.update_damage_zones()
         self.update_gems()
         self.check_level_up()
+
+    def start_boss_fight(self):
+        diff = DIFFICULTY_DATA[self.difficulty]
+        boss_hp = int(500 * diff["hp_mult"])
+        self.enemy_list.clear()
+        self.enemy_count = 0
+        self.boss = {
+            "x": self.player_x,
+            "y": self.player_y - 60,
+            "hp": boss_hp,
+            "max_hp": boss_hp,
+            "speed": 0.5 * diff["speed_mult"],
+            "facing": 1,
+            "attack_timer": 0,
+            "summon_timer": 0,
+            "flash_timer": 0,
+        }
+        self.boss_hp = boss_hp
+        self.boss_max_hp = boss_hp
+        self.boss_active = True
+        self.state = "BOSS"
+
+    def update_boss_entity(self):
+        if not self.boss_active or self.boss is None:
+            return
+        if self.boss["hp"] <= 0:
+            self.defeat_boss()
+            return
+
+        dx = self.player_x - self.boss["x"]
+        dy = self.player_y - self.boss["y"]
+        distance = math.sqrt(dx * dx + dy * dy)
+        if distance > 0:
+            self.boss["x"] += dx / distance * self.boss["speed"]
+            self.boss["y"] += dy / distance * self.boss["speed"]
+            self.boss["facing"] = 1 if dx >= 0 else -1
+
+        self.boss["attack_timer"] += 1
+        if self.boss["attack_timer"] >= BOSS_ATTACK_INTERVAL:
+            self.boss["attack_timer"] = 0
+            self.fire_boss_projectiles(dx, dy, distance)
+
+        self.boss["summon_timer"] += 1
+        if self.boss["summon_timer"] >= BOSS_SUMMON_INTERVAL:
+            self.boss["summon_timer"] = 0
+            self.summon_boss_minions()
+
+        self.boss["flash_timer"] = max(0, self.boss["flash_timer"] - 1)
+        self.boss_hp = max(0, int(self.boss["hp"]))
+        self.boss_max_hp = int(self.boss["max_hp"])
+        if distance <= 22 and self.dash_invincible <= 0 and self.player_invincible <= 0:
+            self.player_hp -= 5
+            self.player_invincible = 60
+            if self.player_hp <= 0:
+                self.state = "GAME_OVER"
+
+    def fire_boss_projectiles(self, dx, dy, distance):
+        if self.boss is None:
+            return
+        if distance == 0:
+            dx = 1.0
+            dy = 0.0
+            distance = 1.0
+
+        base_dx = dx / distance
+        base_dy = dy / distance
+        speed = 1.5
+        for angle in (-0.22, 0, 0.22):
+            cos_a = math.cos(angle)
+            sin_a = math.sin(angle)
+            shot_dx = base_dx * cos_a - base_dy * sin_a
+            shot_dy = base_dx * sin_a + base_dy * cos_a
+            self.enemy_projectile_list.append({
+                "type": "boss_homing",
+                "x": self.boss["x"],
+                "y": self.boss["y"],
+                "dx": shot_dx * speed,
+                "dy": shot_dy * speed,
+                "speed": speed,
+                "homing": 0.02,
+                "damage": 2,
+                "lifetime": 300,
+            })
+
+    def summon_boss_minions(self):
+        if self.boss is None:
+            return
+        summon_counts = [2, 3, 4]
+        desired_count = summon_counts[self.difficulty]
+        room = MAX_ENEMIES - 1 - len(self.enemy_list)
+        summon_count = min(desired_count, room)
+        if summon_count <= 0:
+            return
+
+        diff = DIFFICULTY_DATA[self.difficulty]
+        time_hp_scale, time_speed_scale, _ = self.get_time_scaling()
+        _, _, base_hp, base_speed, _, _ = ENEMY_BY_TYPE[0]
+        for index in range(summon_count):
+            angle = math.tau * index / summon_count + random.uniform(-0.35, 0.35)
+            distance = random.uniform(24, 32)
+            self.enemy_list.append({
+                "type": 0,
+                "x": self.boss["x"] + math.cos(angle) * distance,
+                "y": self.boss["y"] + math.sin(angle) * distance,
+                "hp": int(base_hp * diff["hp_mult"] * time_hp_scale),
+                "speed": base_speed * diff["speed_mult"] * time_speed_scale,
+                "facing": 1,
+                "anim_frame": 0,
+                "ai_state": "chase",
+                "knockback": 0,
+            })
+        self.enemy_count = len(self.enemy_list)
+
+    def defeat_boss(self):
+        self.boss_hp = 0
+        self.boss_active = False
+        self.enemy_projectile_list.clear()
+        self.state = "VICTORY"
+
+    def damage_boss(self, damage):
+        if not self.boss_active or self.boss is None or self.boss["hp"] <= 0:
+            return
+        self.boss["hp"] = max(0, self.boss["hp"] - damage)
+        self.boss["flash_timer"] = 10
+        self.boss_hp = max(0, int(self.boss["hp"]))
+        if self.boss["hp"] <= 0:
+            self.defeat_boss()
+
+    def projectile_hits_boss(self, projectile, projectile_x, projectile_y, width, height):
+        if not self.boss_active or self.boss is None or self.boss["hp"] <= 0:
+            return False
+        if projectile["type"] in ("cross", "hyperlove", "holy_wand", "death_spiral", "hellfire") and id(self.boss) in projectile["hit_enemy_ids"]:
+            return False
+        if not rect_overlap(projectile_x, projectile_y, width, height, self.boss["x"] - 16, self.boss["y"] - 16, 32, 32):
+            return False
+
+        if projectile["type"] == "holy_water":
+            self.create_damage_zone(projectile["x"], projectile["y"], projectile["damage"], projectile["weapon_id"])
+            return True
+        self.damage_boss(projectile["damage"])
+        if projectile["type"] in ("cross", "hyperlove", "holy_wand", "death_spiral", "hellfire"):
+            projectile["hit_enemy_ids"].append(id(self.boss))
+            return False
+        return True
 
     def update_weapons(self):
         for weapon_id in self.weapon_inventory:
@@ -902,6 +1148,22 @@ class App:
                     self.fire_cross()
                 elif weapon_id == 7:
                     self.fire_fire_wand()
+                elif weapon_id == 8:
+                    self.fire_bloody_tear()
+                elif weapon_id == 9:
+                    self.fire_holy_wand()
+                elif weapon_id == 10:
+                    self.fire_death_spiral()
+                elif weapon_id == 11:
+                    self.fire_thousand_edge()
+                elif weapon_id == 12:
+                    self.fire_boros_sea()
+                elif weapon_id == 13:
+                    self.fire_soul_eater()
+                elif weapon_id == 14:
+                    self.fire_hyperlove()
+                elif weapon_id == 15:
+                    self.fire_hellfire()
 
     def get_passive_level(self, passive_id):
         for passive in self.passive_inventory:
@@ -910,7 +1172,7 @@ class App:
         return 0
 
     def get_weapon_stats(self, weapon_id):
-        weapon = WEAPON_DATA[weapon_id]
+        weapon = EVOLVED_WEAPON_DATA[weapon_id] if weapon_id in EVOLVED_WEAPON_DATA else WEAPON_DATA[weapon_id]
         level = self.weapon_levels.get(weapon_id, 1)
         level_data = WEAPON_LEVELS[level]
         return {
@@ -963,14 +1225,20 @@ class App:
         self.weapon_damage_mult = weapon_damage_mult
         self.check_evolution_ready()
 
-    def check_evolution_ready(self):
-        ready = []
-        for weapon_id, requirement in EVOLUTION_REQUIREMENTS.items():
+    def check_evolution(self):
+        evolutions = []
+        for weapon_id in self.weapon_inventory:
+            if weapon_id not in EVOLUTION_REQUIREMENTS:
+                continue
+            requirement = EVOLUTION_REQUIREMENTS[weapon_id]
             weapon_level = self.weapon_levels.get(weapon_id, 0)
             passive_level = self.get_passive_level(requirement["passive_id"])
             if weapon_level >= requirement["weapon_level"] and passive_level >= requirement["passive_level"]:
-                ready.append(weapon_id)
-        self.evolution_ready = ready
+                evolutions.append((weapon_id, EVOLUTION_MAP[weapon_id]))
+        return evolutions
+
+    def check_evolution_ready(self):
+        self.evolution_ready = [base_weapon_id for base_weapon_id, _ in self.check_evolution()]
 
     def update_gems(self):
         magnet_range = self.magnet_range
@@ -1015,20 +1283,23 @@ class App:
         self.recalculate_passive_stats()
         self.prev_state = self.state
         self.generate_level_up_choices()
+        self.play_sfx(2)
         self.state = "LEVEL_UP"
 
     def generate_level_up_choices(self):
         candidates = []
-        owned_passive_ids = [passive["id"] for passive in self.passive_inventory]
-        for p in PASSIVE_POOL:
-            passive_level = self.get_passive_level(p["id"])
+        available_evolutions = self.check_evolution()
+        for passive_upgrade in PASSIVE_POOL:
+            passive_level = self.get_passive_level(passive_upgrade["id"])
             if passive_level > 0 and passive_level < MAX_PASSIVE_LEVEL:
-                candidates.append(p)
+                candidates.append(passive_upgrade)
             elif passive_level == 0 and len(self.passive_inventory) < MAX_PASSIVE_SLOTS:
-                candidates.append(p)
+                candidates.append(passive_upgrade)
 
         for weapon_upgrade in UPGRADE_POOL:
             weapon_id = weapon_upgrade["id"]
+            if weapon_id in EVOLVED_WEAPON_DATA and weapon_id not in self.weapon_inventory:
+                continue
             if weapon_id in self.weapon_inventory and self.weapon_levels.get(weapon_id, 1) < MAX_WEAPON_LEVEL:
                 candidates.append(weapon_upgrade)
             elif weapon_id not in self.weapon_inventory and len(self.weapon_inventory) < MAX_WEAPON_SLOTS:
@@ -1041,15 +1312,32 @@ class App:
             self.level_up_choices = list(candidates)
             while len(self.level_up_choices) < 3:
                 self.level_up_choices.append({"type": "stat", "name": "Max HP", "desc": "Max HP +10"})
+
+        if available_evolutions:
+            base_weapon_id, evolved_weapon_id = random.choice(available_evolutions)
+            base_name = WEAPON_DATA[base_weapon_id]["name"]
+            evolved_name = EVOLVED_WEAPON_DATA[evolved_weapon_id]["name"]
+            evolution_choice = {
+                "type": "evolution",
+                "base_id": base_weapon_id,
+                "evolved_id": evolved_weapon_id,
+                "name": f"EVOLVE: {base_name} -> {evolved_name}",
+                "desc": "Replace weapon with evolved form",
+            }
+            if self.level_up_choices:
+                self.level_up_choices[0] = evolution_choice
+            else:
+                self.level_up_choices = [evolution_choice]
                 
         self.level_up_cursor = 0
 
     def fire_whip(self):
         weapon = self.get_weapon_stats(0)
         self.weapon_cooldowns[0] = weapon["cooldown"]
+        self.play_sfx(0)
         self.whip_attack_side = self.whip_next_attack_side
         self.whip_next_attack_side *= -1
-        self.whip_attack_timer = 10
+        self.whip_attack_timer = WHIP_ATTACK_FRAMES
 
         attack_range = weapon["range"]
         if self.whip_attack_side > 0:
@@ -1075,6 +1363,8 @@ class App:
                 12,
             ):
                 enemy["hp"] -= weapon["damage"]
+                if enemy["hp"] <= 0:
+                    self.play_sfx(1)
                 dx = enemy["x"] - self.player_x
                 dy = enemy["y"] - self.player_y
                 distance_sq = dx * dx + dy * dy
@@ -1082,16 +1372,24 @@ class App:
                 enemy["x"] += dx / dist * 15
                 enemy["y"] += dy / dist * 15
                 enemy["knockback"] = 5
+        if self.boss_active and self.boss is not None:
+            if rect_overlap(min_x, min_y, max_x - min_x, max_y - min_y, self.boss["x"] - 16, self.boss["y"] - 16, 32, 32):
+                self.damage_boss(weapon["damage"])
 
     def fire_magic_wand(self):
         weapon_id = 1
         weapon = self.get_weapon_stats(weapon_id)
         self.weapon_cooldowns[weapon_id] = weapon["cooldown"]
-        if not self.enemy_list:
+        targets = list(self.enemy_list)
+        if self.boss_active and self.boss is not None and self.boss["hp"] > 0:
+            targets.append(self.boss)
+        if not targets:
             return
 
+        self.play_sfx(0)
+
         target = min(
-            self.enemy_list,
+            targets,
             key=lambda enemy: (enemy["x"] - self.player_x) * (enemy["x"] - self.player_x)
             + (enemy["y"] - self.player_y) * (enemy["y"] - self.player_y),
         )
@@ -1120,6 +1418,7 @@ class App:
         weapon_id = 2
         weapon = self.get_weapon_stats(weapon_id)
         self.weapon_cooldowns[weapon_id] = weapon["cooldown"]
+        self.play_sfx(0)
         self.projectile_list.append({
             "type": "axe",
             "x": self.player_x,
@@ -1136,6 +1435,7 @@ class App:
         weapon_id = 3
         weapon = self.get_weapon_stats(weapon_id)
         self.weapon_cooldowns[weapon_id] = weapon["cooldown"]
+        self.play_sfx(0)
         length = math.sqrt(self.facing_x * self.facing_x + self.facing_y * self.facing_y)
         if length == 0:
             dx = 1.0
@@ -1161,6 +1461,7 @@ class App:
         weapon_id = 4
         weapon = self.get_weapon_stats(weapon_id)
         self.weapon_cooldowns[weapon_id] = weapon["cooldown"]
+        self.play_sfx(0)
         length = math.sqrt(self.facing_x * self.facing_x + self.facing_y * self.facing_y)
         if length == 0:
             dx = 1.0
@@ -1186,10 +1487,11 @@ class App:
         weapon_id = 5
         weapon = self.get_weapon_stats(weapon_id)
         self.garlic_tick_timer += 1
-        if self.garlic_tick_timer < 30:
+        if self.garlic_tick_timer < GARLIC_TICK_INTERVAL:
             return
-        self.garlic_tick_timer -= 30
+        self.garlic_tick_timer -= GARLIC_TICK_INTERVAL
 
+        self.play_sfx(0)
         range_sq = weapon["range"] * weapon["range"]
         for enemy in self.enemy_list:
             if enemy["hp"] <= 0:
@@ -1199,11 +1501,19 @@ class App:
             distance_sq = dx * dx + dy * dy
             if distance_sq <= range_sq:
                 enemy["hp"] -= weapon["damage"]
+                if enemy["hp"] <= 0:
+                    self.play_sfx(1)
+        if self.boss_active and self.boss is not None:
+            dx = self.boss["x"] - self.player_x
+            dy = self.boss["y"] - self.player_y
+            if dx * dx + dy * dy <= range_sq:
+                self.damage_boss(weapon["damage"])
 
     def fire_cross(self):
         weapon_id = 6
         weapon = self.get_weapon_stats(weapon_id)
         self.weapon_cooldowns[weapon_id] = weapon["cooldown"]
+        self.play_sfx(0)
         length = math.sqrt(self.facing_x * self.facing_x + self.facing_y * self.facing_y)
         if length == 0:
             dx = 1.0
@@ -1232,14 +1542,21 @@ class App:
         })
 
     def fire_fire_wand(self):
-        weapon_id = 7
+        self.fire_targeted_projectile(7, "fire_wand", 3)
+
+    def fire_targeted_projectile(self, weapon_id, projectile_type, speed):
         weapon = self.get_weapon_stats(weapon_id)
         self.weapon_cooldowns[weapon_id] = weapon["cooldown"]
-        if not self.enemy_list:
+        targets = list(self.enemy_list)
+        if self.boss_active and self.boss is not None and self.boss["hp"] > 0:
+            targets.append(self.boss)
+        if not targets:
             return
 
+        self.play_sfx(0)
+
         target = min(
-            self.enemy_list,
+            targets,
             key=lambda enemy: (enemy["x"] - self.player_x) * (enemy["x"] - self.player_x)
             + (enemy["y"] - self.player_y) * (enemy["y"] - self.player_y),
         )
@@ -1251,29 +1568,198 @@ class App:
             dy = 0.0
             distance = 1.0
 
-        speed = 3 * self.projectile_speed_mult
-        self.projectile_list.append({
-            "type": "fire_wand",
+        projectile_speed = speed * self.projectile_speed_mult
+        projectile = {
+            "type": projectile_type,
             "x": self.player_x,
             "y": self.player_y,
-            "dx": dx / distance * speed,
-            "dy": dy / distance * speed,
+            "dx": dx / distance * projectile_speed,
+            "dy": dy / distance * projectile_speed,
             "damage": weapon["damage"],
-            "lifetime": max(1, int(weapon["range"] / speed)),
+            "lifetime": max(1, int(weapon["range"] / projectile_speed)),
             "weapon_id": weapon_id,
             "gravity": 0,
-            "explosion_damage": 4 * WEAPON_LEVELS[self.weapon_levels.get(weapon_id, 1)]["damage_mult"] * self.weapon_damage_mult,
-        })
+        }
+        if projectile_type in ("fire_wand", "hellfire"):
+            projectile["explosion_damage"] = 4 * WEAPON_LEVELS[self.weapon_levels.get(weapon_id, 1)]["damage_mult"] * self.weapon_damage_mult
+        if projectile_type in ("holy_wand", "hellfire"):
+            projectile["hit_enemy_ids"] = []
+        self.projectile_list.append(projectile)
 
-    def create_damage_zone(self, x, y, damage, weapon_id):
+    def fire_bloody_tear(self):
+        weapon_id = 8
+        weapon = self.get_weapon_stats(weapon_id)
+        self.weapon_cooldowns[weapon_id] = weapon["cooldown"]
+        self.play_sfx(0)
+        self.whip_attack_side = self.whip_next_attack_side
+        self.whip_next_attack_side *= -1
+        self.whip_attack_timer = WHIP_ATTACK_FRAMES
+
+        attack_range = weapon["range"]
+        if self.whip_attack_side > 0:
+            min_x = self.player_x
+            max_x = self.player_x + attack_range
+        else:
+            min_x = self.player_x - attack_range
+            max_x = self.player_x
+        min_y = self.player_y - 20
+        max_y = self.player_y + 20
+        hit_count = 0
+
+        for enemy in self.enemy_list:
+            enemy_hitbox_x = enemy["x"] - 6
+            enemy_hitbox_y = enemy["y"] - 6
+            if rect_overlap(min_x, min_y, max_x - min_x, max_y - min_y, enemy_hitbox_x, enemy_hitbox_y, 12, 12):
+                enemy["hp"] -= weapon["damage"]
+                if enemy["hp"] <= 0:
+                    self.play_sfx(1)
+                hit_count += 1
+                dx = enemy["x"] - self.player_x
+                dy = enemy["y"] - self.player_y
+                distance_sq = dx * dx + dy * dy
+                dist = math.sqrt(distance_sq) if distance_sq > 0 else 1
+                enemy["x"] += dx / dist * 18
+                enemy["y"] += dy / dist * 18
+                enemy["knockback"] = 5
+        if hit_count > 0:
+            self.player_hp = min(self.player_max_hp, self.player_hp + hit_count)
+        if self.boss_active and self.boss is not None:
+            if rect_overlap(min_x, min_y, max_x - min_x, max_y - min_y, self.boss["x"] - 16, self.boss["y"] - 16, 32, 32):
+                self.damage_boss(weapon["damage"])
+                self.player_hp = min(self.player_max_hp, self.player_hp + 1)
+
+    def fire_holy_wand(self):
+        self.fire_targeted_projectile(9, "holy_wand", 4)
+
+    def fire_death_spiral(self):
+        weapon_id = 10
+        weapon = self.get_weapon_stats(weapon_id)
+        self.weapon_cooldowns[weapon_id] = weapon["cooldown"]
+        self.play_sfx(0)
+        speed = 2.5 * self.projectile_speed_mult
+        for angle in (0, math.pi / 2, math.pi, math.pi * 1.5):
+            self.projectile_list.append({
+                "type": "death_spiral",
+                "x": self.player_x,
+                "y": self.player_y,
+                "dx": math.cos(angle) * speed,
+                "dy": math.sin(angle) * speed,
+                "damage": weapon["damage"],
+                "lifetime": max(1, int(weapon["range"] / speed)),
+                "weapon_id": weapon_id,
+                "gravity": 0,
+                "hit_enemy_ids": [],
+            })
+
+    def fire_thousand_edge(self):
+        weapon_id = 11
+        weapon = self.get_weapon_stats(weapon_id)
+        self.weapon_cooldowns[weapon_id] = weapon["cooldown"]
+        self.play_sfx(0)
+        length = math.sqrt(self.facing_x * self.facing_x + self.facing_y * self.facing_y)
+        base_dx, base_dy = (1.0, 0.0) if length == 0 else (self.facing_x / length, self.facing_y / length)
+        speed = 4.8 * self.projectile_speed_mult
+        for spread in (-0.16, 0, 0.16):
+            cos_a = math.cos(spread)
+            sin_a = math.sin(spread)
+            dx = base_dx * cos_a - base_dy * sin_a
+            dy = base_dx * sin_a + base_dy * cos_a
+            self.projectile_list.append({
+                "type": "thousand_edge",
+                "x": self.player_x,
+                "y": self.player_y,
+                "dx": dx * speed,
+                "dy": dy * speed,
+                "damage": weapon["damage"],
+                "lifetime": max(1, int(weapon["range"] / speed)),
+                "weapon_id": weapon_id,
+                "gravity": 0,
+            })
+
+    def fire_boros_sea(self):
+        weapon_id = 12
+        weapon = self.get_weapon_stats(weapon_id)
+        self.weapon_cooldowns[weapon_id] = weapon["cooldown"]
+        self.play_sfx(0)
+        angle = random.random() * math.tau
+        distance = min(weapon["range"], 48)
+        self.create_damage_zone(
+            self.player_x + math.cos(angle) * distance,
+            self.player_y + math.sin(angle) * distance,
+            weapon["damage"],
+            weapon_id,
+            size=40,
+            timer=45,
+            tick_interval=8,
+        )
+
+    def fire_soul_eater(self):
+        weapon_id = 13
+        weapon = self.get_weapon_stats(weapon_id)
+        self.garlic_tick_timer += 1
+        if self.garlic_tick_timer < SOUL_EATER_TICK_INTERVAL:
+            return
+        self.garlic_tick_timer -= SOUL_EATER_TICK_INTERVAL
+
+        self.play_sfx(0)
+        range_sq = weapon["range"] * weapon["range"]
+        hit_count = 0
+        for enemy in self.enemy_list:
+            if enemy["hp"] <= 0:
+                continue
+            dx = enemy["x"] - self.player_x
+            dy = enemy["y"] - self.player_y
+            if dx * dx + dy * dy <= range_sq:
+                enemy["hp"] -= weapon["damage"]
+                if enemy["hp"] <= 0:
+                    self.play_sfx(1)
+                hit_count += 1
+        if self.boss_active and self.boss is not None:
+            dx = self.boss["x"] - self.player_x
+            dy = self.boss["y"] - self.player_y
+            if dx * dx + dy * dy <= range_sq:
+                self.damage_boss(weapon["damage"])
+                hit_count += 1
+        if hit_count > 0:
+            self.player_hp = min(self.player_max_hp, self.player_hp + 1)
+
+    def fire_hyperlove(self):
+        weapon_id = 14
+        weapon = self.get_weapon_stats(weapon_id)
+        self.weapon_cooldowns[weapon_id] = weapon["cooldown"]
+        self.play_sfx(0)
+        length = math.sqrt(self.facing_x * self.facing_x + self.facing_y * self.facing_y)
+        dx, dy = (1.0, 0.0) if length == 0 else (self.facing_x / length, self.facing_y / length)
+        speed = 3 * self.projectile_speed_mult
+        for side in (-1, 1):
+            self.projectile_list.append({
+                "type": "hyperlove",
+                "x": self.player_x,
+                "y": self.player_y,
+                "dx": dx * speed + -dy * side * 0.6,
+                "dy": dy * speed + dx * side * 0.6,
+                "damage": weapon["damage"],
+                "lifetime": max(1, int(weapon["range"] * 2 / speed) + 10),
+                "weapon_id": weapon_id,
+                "gravity": 0,
+                "traveled": 0.0,
+                "max_range": weapon["range"],
+                "returning": False,
+                "hit_enemy_ids": [],
+            })
+
+    def fire_hellfire(self):
+        self.fire_targeted_projectile(15, "hellfire", 3.2)
+
+    def create_damage_zone(self, x, y, damage, weapon_id, size=24, timer=30, tick_interval=10):
         self.damage_zone_list.append({
-            "x": x - 12,
-            "y": y - 12,
-            "width": 24,
-            "height": 24,
+            "x": x - size / 2,
+            "y": y - size / 2,
+            "width": size,
+            "height": size,
             "damage": damage,
-            "timer": 30,
-            "tick_interval": 10,
+            "timer": timer,
+            "tick_interval": tick_interval,
             "weapon_id": weapon_id,
         })
 
@@ -1285,7 +1771,7 @@ class App:
             projectile["y"] += projectile["dy"]
             projectile["lifetime"] -= 1
 
-            if projectile["type"] == "cross":
+            if projectile["type"] in ("cross", "hyperlove"):
                 step_distance = math.sqrt(projectile["dx"] * projectile["dx"] + projectile["dy"] * projectile["dy"])
                 projectile["traveled"] += step_distance
                 if not projectile["returning"] and projectile["traveled"] >= projectile["max_range"]:
@@ -1294,10 +1780,10 @@ class App:
                     projectile["returning"] = True
                     projectile["hit_enemy_ids"] = []
 
-            if projectile["type"] == "axe":
+            if projectile["type"] in ("axe", "death_spiral"):
                 width = 16
                 height = 16
-            elif projectile["type"] == "knife":
+            elif projectile["type"] in ("knife", "thousand_edge"):
                 width = 8
                 height = 4
             elif projectile["type"] == "holy_water":
@@ -1306,7 +1792,10 @@ class App:
             elif projectile["type"] == "cross":
                 width = 6
                 height = 6
-            elif projectile["type"] == "fire_wand":
+            elif projectile["type"] == "hyperlove":
+                width = 8
+                height = 8
+            elif projectile["type"] in ("fire_wand", "hellfire"):
                 width = 5
                 height = 5
             else:
@@ -1319,15 +1808,17 @@ class App:
             for enemy in self.enemy_list:
                 if enemy["hp"] <= 0:
                     continue
-                if projectile["type"] == "cross" and id(enemy) in projectile["hit_enemy_ids"]:
+                if projectile["type"] in ("cross", "hyperlove", "holy_wand", "death_spiral", "hellfire") and id(enemy) in projectile["hit_enemy_ids"]:
                     continue
                 if rect_overlap(projectile_x, projectile_y, width, height, enemy["x"] - 6, enemy["y"] - 6, 12, 12):
                     if projectile["type"] == "holy_water":
                         self.create_damage_zone(projectile["x"], projectile["y"], projectile["damage"], projectile["weapon_id"])
                         hit_enemy = True
                         break
-                    if projectile["type"] == "fire_wand":
+                    if projectile["type"] in ("fire_wand", "hellfire"):
                         enemy["hp"] -= projectile["damage"]
+                        if enemy["hp"] <= 0:
+                            self.play_sfx(1)
                         dx = enemy["x"] - self.player_x
                         dy = enemy["y"] - self.player_y
                         distance_sq = dx * dx + dy * dy
@@ -1335,7 +1826,7 @@ class App:
                         enemy["x"] += dx / dist * 15
                         enemy["y"] += dy / dist * 15
                         enemy["knockback"] = 5
-                        explosion_range_sq = 24 * 24
+                        explosion_range_sq = (32 if projectile["type"] == "hellfire" else 24) ** 2
                         for splash_enemy in self.enemy_list:
                             if splash_enemy["hp"] <= 0:
                                 continue
@@ -1343,10 +1834,18 @@ class App:
                             splash_dy = splash_enemy["y"] - projectile["y"]
                             if splash_dx * splash_dx + splash_dy * splash_dy <= explosion_range_sq:
                                 splash_enemy["hp"] -= projectile["explosion_damage"]
-                        hit_enemy = True
-                        break
+                                if splash_enemy["hp"] <= 0:
+                                    self.play_sfx(1)
+                        if projectile["type"] == "hellfire":
+                            projectile["hit_enemy_ids"].append(id(enemy))
+                        else:
+                            hit_enemy = True
+                            break
+                        continue
 
                     enemy["hp"] -= projectile["damage"]
+                    if enemy["hp"] <= 0:
+                        self.play_sfx(1)
                     dx = enemy["x"] - self.player_x
                     dy = enemy["y"] - self.player_y
                     distance_sq = dx * dx + dy * dy
@@ -1354,15 +1853,18 @@ class App:
                     enemy["x"] += dx / dist * 15
                     enemy["y"] += dy / dist * 15
                     enemy["knockback"] = 5
-                    if projectile["type"] == "cross":
+                    if projectile["type"] in ("cross", "hyperlove", "holy_wand", "death_spiral"):
                         projectile["hit_enemy_ids"].append(id(enemy))
                     else:
                         hit_enemy = True
                         break
 
+            if not hit_enemy:
+                hit_enemy = self.projectile_hits_boss(projectile, projectile_x, projectile_y, width, height)
+
             if projectile["type"] == "holy_water" and not hit_enemy and projectile["lifetime"] <= 0:
                 self.create_damage_zone(projectile["x"], projectile["y"], projectile["damage"], projectile["weapon_id"])
-            elif projectile["type"] == "cross" and projectile["returning"]:
+            elif projectile["type"] in ("cross", "hyperlove") and projectile["returning"]:
                 dx = projectile["x"] - self.player_x
                 dy = projectile["y"] - self.player_y
                 if projectile["lifetime"] > 0 and dx * dx + dy * dy > 64:
@@ -1375,6 +1877,19 @@ class App:
     def update_enemy_projectiles(self):
         kept_projectiles = []
         for projectile in self.enemy_projectile_list:
+            if projectile.get("type") == "boss_homing":
+                dx = self.player_x - projectile["x"]
+                dy = self.player_y - projectile["y"]
+                distance = math.sqrt(dx * dx + dy * dy)
+                if distance > 0:
+                    projectile["dx"] += dx / distance * projectile["homing"]
+                    projectile["dy"] += dy / distance * projectile["homing"]
+                    speed = projectile["speed"]
+                    current_speed = math.sqrt(projectile["dx"] * projectile["dx"] + projectile["dy"] * projectile["dy"])
+                    if current_speed > 0:
+                        projectile["dx"] = projectile["dx"] / current_speed * speed
+                        projectile["dy"] = projectile["dy"] / current_speed * speed
+
             projectile["x"] += projectile["dx"]
             projectile["y"] += projectile["dy"]
             projectile["lifetime"] -= 1
@@ -1401,6 +1916,11 @@ class App:
                         continue
                     if rect_overlap(zone["x"], zone["y"], zone["width"], zone["height"], enemy["x"] - 6, enemy["y"] - 6, 12, 12):
                         enemy["hp"] -= zone["damage"]
+                        if enemy["hp"] <= 0:
+                            self.play_sfx(1)
+                if self.boss_active and self.boss is not None:
+                    if rect_overlap(zone["x"], zone["y"], zone["width"], zone["height"], self.boss["x"] - 16, self.boss["y"] - 16, 32, 32):
+                        self.damage_boss(zone["damage"])
             zone["timer"] -= 1
             if zone["timer"] > 0:
                 kept_zones.append(zone)
@@ -1413,22 +1933,25 @@ class App:
             self.enemy_count = len(self.enemy_list)
             return
 
-        self.spawn_timer = self.spawn_interval
-        if len(self.enemy_list) >= MAX_ENEMIES:
-            self.enemy_count = len(self.enemy_list)
-            return
-
         elapsed_seconds = self.timer_frames / 30
         available_enemies = [enemy for enemy in ENEMY_DATA if elapsed_seconds >= enemy[4]]
         type_id, _, base_hp, base_speed, _, _ = random.choice(available_enemies)
         angle = random.random() * math.tau
         diff = DIFFICULTY_DATA[self.difficulty]
+        time_hp_scale, time_speed_scale, time_spawn_scale = self.get_time_scaling()
+        self.spawn_interval = max(10, int(SPAWN_INTERVAL_FRAMES * diff["spawn_mult"] * time_spawn_scale))
+
+        if len(self.enemy_list) >= MAX_ENEMIES:
+            self.spawn_timer = self.spawn_interval
+            self.enemy_count = len(self.enemy_list)
+            return
+        self.spawn_timer = self.spawn_interval
         enemy = {
             "type": type_id,
             "x": self.player_x + math.cos(angle) * ENEMY_SPAWN_DISTANCE,
             "y": self.player_y + math.sin(angle) * ENEMY_SPAWN_DISTANCE,
-            "hp": int(base_hp * diff["hp_mult"]),
-            "speed": base_speed * diff["speed_mult"],
+            "hp": int(base_hp * diff["hp_mult"] * time_hp_scale),
+            "speed": base_speed * diff["speed_mult"] * time_speed_scale,
             "facing": 1,
             "anim_frame": 0,
             "ai_state": "chase",
@@ -1463,6 +1986,7 @@ class App:
             dy = self.player_y - enemy["y"]
             distance_sq = dx * dx + dy * dy
             if enemy["hp"] <= 0:
+                self.play_sfx(1)
                 if enemy["type"] == 5:
                     for i in range(2):
                         if len(self.enemy_list) + added_enemies >= MAX_ENEMIES:
@@ -1524,7 +2048,7 @@ class App:
                             enemy["attack_timer"] = 0
                         else:
                             enemy["attack_timer"] = enemy.get("attack_timer", 0) + 1
-                            if enemy["attack_timer"] >= 90:
+                            if enemy["attack_timer"] >= DARK_MAGE_ATTACK_INTERVAL:
                                 enemy["attack_timer"] = 0
                                 self.enemy_projectile_list.append({
                                     "type": "enemy",
@@ -1537,7 +2061,7 @@ class App:
                                 })
                     elif enemy_type == 5:
                         enemy["wander_timer"] = enemy.get("wander_timer", 0) + 1
-                        if enemy["wander_timer"] >= 120:
+                        if enemy["wander_timer"] >= SLIME_WANDER_INTERVAL:
                             enemy["wander_timer"] = 0
                             enemy["wander_angle"] = random.uniform(0, math.tau)
                         wander_angle = enemy.get("wander_angle", 0.0)
@@ -1547,9 +2071,9 @@ class App:
                         enemy["x"] += base_dx * enemy["speed"]
                         enemy["y"] += base_dy * enemy["speed"]
                         enemy["summon_timer"] = enemy.get("summon_timer", 90) + 1
-                        if enemy["summon_timer"] >= 180:
+                        if enemy["summon_timer"] >= NECROMANCER_SUMMON_INTERVAL:
                             enemy["summon_timer"] = 0
-                            total_enemies = len(self.enemy_list) + added_enemies
+                            total_enemies = len(self.enemy_list) + added_enemies + (1 if self.boss_active else 0)
                             to_summon = min(2, MAX_ENEMIES - total_enemies)
                             for _ in range(to_summon):
                                 angle = random.uniform(0, math.tau)
@@ -1578,9 +2102,9 @@ class App:
                             enemy["x"] += base_dx * enemy["speed"]
                             enemy["y"] += base_dy * enemy["speed"]
                             enemy["dash_timer"] = enemy.get("dash_timer", 0) + 1
-                            if enemy["dash_timer"] >= 120:
+                            if enemy["dash_timer"] >= DEMON_DASH_INTERVAL:
                                 enemy["dash_active"] = True
-                                enemy["dash_frames"] = 15
+                                enemy["dash_frames"] = DEMON_DASH_DURATION
                     else:
                         enemy["x"] += base_dx * enemy["speed"]
                         enemy["y"] += base_dy * enemy["speed"]
@@ -1613,6 +2137,8 @@ class App:
                 self.apply_passive_upgrade(choice["id"])
             elif choice["type"] == "weapon":
                 self.apply_weapon_upgrade(choice["id"])
+            elif choice["type"] == "evolution":
+                self.apply_evolution(choice["base_id"], choice["evolved_id"])
             elif choice["type"] == "stat":
                 self.base_player_max_hp += 10
                 self.recalculate_passive_stats()
@@ -1628,6 +2154,18 @@ class App:
             self.weapon_cooldowns[weapon_id] = 0
         self.check_evolution_ready()
 
+    def apply_evolution(self, base_weapon_id, evolved_weapon_id):
+        if (base_weapon_id, evolved_weapon_id) not in self.check_evolution():
+            return
+        level = self.weapon_levels.get(base_weapon_id, 1)
+        cooldown = self.weapon_cooldowns.get(base_weapon_id, 0)
+        self.weapon_inventory = [evolved_weapon_id if weapon_id == base_weapon_id else weapon_id for weapon_id in self.weapon_inventory]
+        self.weapon_levels.pop(base_weapon_id, None)
+        self.weapon_cooldowns.pop(base_weapon_id, None)
+        self.weapon_levels[evolved_weapon_id] = level
+        self.weapon_cooldowns[evolved_weapon_id] = cooldown
+        self.check_evolution_ready()
+
     def apply_passive_upgrade(self, passive_id):
         for passive in self.passive_inventory:
             if passive["id"] == passive_id:
@@ -1641,16 +2179,108 @@ class App:
 
     def update_paused(self):
         if pyxel.btnp(pyxel.KEY_ESCAPE):
-            self.state = "PLAYING"
+            self.state = self.prev_state
 
     def update_boss(self):
-        pass
+        self._tick_sfx_cooldowns()
+        self.update_debug_controls()
+        if pyxel.btnp(pyxel.KEY_ESCAPE):
+            self.prev_state = "BOSS"
+            self.state = "PAUSED"
+            return
+
+        self.timer_frames += self.debug_time_scale
+        self.biome = self.get_current_biome()[0]
+        self.update_active_game(allow_spawning=False)
+
+    def calculate_score(self):
+        diff_mult = self.difficulty + 1
+        self.final_score = self.kills * self.player_level * diff_mult
+        if self.final_score > self.high_score and self.final_score > 0:
+            self.high_score = self.final_score
+            self.is_new_high_score = True
+        else:
+            self.is_new_high_score = False
+
+    def reset_game(self):
+        self.timer_frames = 0
+        self.base_player_max_hp = 100
+        self.player_hp = 100
+        self.player_max_hp = self.base_player_max_hp
+        self.player_level = 1
+        self.player_xp = 0
+        self.player_xp_next = LEVEL_XP_THRESHOLDS[self.player_level]
+        self.player_x = 0.0
+        self.player_y = 0.0
+        self.facing_x = 1.0
+        self.facing_y = 0.0
+        self.prev_state = "TITLE"
+        self.enemy_count = 0
+        self.gem_count = 0
+        self.weapon_inventory = [0]
+        self.weapon_levels = {0: 1}
+        self.weapon_cooldowns = {0: 0}
+        self.whip_attack_timer = 0
+        self.whip_attack_side = 1
+        self.whip_next_attack_side = 1
+        self.passive_inventory = []
+        self.weapon_cooldown_mult = 1.0
+        self.weapon_area_mult = 1.0
+        self.projectile_speed_mult = 1.0
+        self.magnet_range = 30
+        self.hp_regen = 0.0
+        self.hp_regen_timer = 0
+        self.luck = 0.0
+        self.weapon_damage_mult = 1.0
+        self.evolution_ready = []
+        self.level_up_choices = []
+        self.level_up_cursor = 0
+        self.boss_active = False
+        self.boss = None
+        self.boss_hp = 0
+        self.boss_max_hp = 0
+        self.boss_warning_timer = 0
+        self.kills = 0
+        self.dash_cooldown = 0
+        self.dash_invincible = 0
+        self.player_invincible = 0
+        self.selected_character = 0
+        self.difficulty = 1
+        self.char_cursor = 0
+        self.diff_cursor = 1
+        self.biome = 0
+        self.enemy_list = []
+        self.spawn_timer = SPAWN_INTERVAL_FRAMES
+        self.spawn_interval = SPAWN_INTERVAL_FRAMES
+        self.projectile_list = []
+        self.enemy_projectile_list = []
+        self.damage_zone_list = []
+        self.garlic_tick_timer = 0
+        self.gem_list = []
+        self.sfx_cooldowns = {0: 0, 1: 0, 2: 0}
+        self.debug_time_scale = 1
+        self.debug_overlay = False
+        self.score_calculated = False
+        self.is_new_high_score = False
+        self.final_score = 0
 
     def update_game_over(self):
-        pass
+        if not getattr(self, "score_calculated", False):
+            self.calculate_score()
+            self.score_calculated = True
+            
+        if pyxel.btnp(pyxel.KEY_RETURN):
+            self.reset_game()
+            self.state = "TITLE"
 
     def update_victory(self):
-        pass
+        if not getattr(self, "score_calculated", False):
+            self.calculate_score()
+            self.score_calculated = True
+            
+        if pyxel.btnp(pyxel.KEY_RETURN):
+            self.reset_game()
+            self.state = "TITLE"
 
     def draw_title(self):
         pyxel.cls(0)
@@ -1719,6 +2349,7 @@ class App:
         if pyxel.frame_count % 30 >= 15:
             frame_y += 16
         self.draw_enemies(cam_x, cam_y)
+        self.draw_boss_entity(cam_x, cam_y)
         self.draw_projectiles(cam_x, cam_y)
         self.draw_enemy_projectiles(cam_x, cam_y)
         for gem in self.gem_list:
@@ -1726,13 +2357,39 @@ class App:
             screen_y = int(gem["y"] - cam_y - 2)
             pyxel.blt(screen_x, screen_y, 0, SPR_XP_GEM[0], SPR_XP_GEM[1], 4, 4, colkey=0)
         if self.whip_attack_timer > 0:
-            whip_range = int(self.get_weapon_stats(0)["range"])
+            whip_weapon_id = 8 if 8 in self.weapon_inventory else 0
+            whip_range = int(self.get_weapon_stats(whip_weapon_id)["range"])
             whip_x = 80 if self.whip_attack_side > 0 else 80 - whip_range
-            pyxel.rect(whip_x, 52, whip_range, 16, 8)
-            self.whip_attack_timer -= 1
+            whip_color = 2 if whip_weapon_id == 8 else 8
+            pyxel.rect(whip_x, 52, whip_range, 16, whip_color)
         if self.player_invincible <= 0 or pyxel.frame_count % 2 == 0:
             pyxel.blt(80 - 8, 60 - 8, 0, SPR_KNIGHT[0], frame_y, 16, 16, colkey=0)
         self.draw_hud()
+        self.draw_debug_overlay()
+        if self.boss_warning_timer > 0 and pyxel.frame_count % 20 < 14:
+            self._draw_centered_text("DEATH APPROACHES", 42, 8)
+
+    def draw_debug_overlay(self):
+        if not self.debug_overlay:
+            return
+        pyxel.text(2, 28, f"FPS:{pyxel.frame_count}", 7)
+        pyxel.text(2, 34, f"ENM:{self.enemy_count}", 7)
+        pyxel.text(2, 40, f"GEM:{self.gem_count}", 7)
+        pyxel.text(2, 46, f"TMR:{self.timer_frames}", 7)
+        pyxel.text(2, 52, f"TSC:{self.debug_time_scale}x", 7)
+
+    def draw_boss_entity(self, cam_x, cam_y):
+        if not self.boss_active or self.boss is None:
+            return
+        screen_x = int(self.boss["x"] - cam_x - 16)
+        screen_y = int(self.boss["y"] - cam_y - 16)
+        if self.boss.get("flash_timer", 0) > 0:
+            pyxel.rect(screen_x, screen_y, 16, 16, 7)
+            pyxel.rect(screen_x + 16, screen_y, 16, 16, 10)
+            pyxel.rect(screen_x, screen_y + 16, 16, 16, 10)
+            pyxel.rect(screen_x + 16, screen_y + 16, 16, 16, 7)
+        else:
+            pyxel.blt(screen_x, screen_y, 0, SPR_BOSS[0], SPR_BOSS[1], 32, 32, colkey=0)
 
     def draw_enemies(self, cam_x, cam_y):
         for enemy in self.enemy_list:
@@ -1750,9 +2407,11 @@ class App:
             pyxel.blt(screen_x, screen_y, 0, sprite_x, sprite_y, 16, 16, colkey=0)
 
     def draw_projectiles(self, cam_x, cam_y):
-        if 5 in self.weapon_inventory:
-            garlic_range = int(self.get_weapon_stats(5)["range"])
-            pyxel.circb(int(self.player_x - cam_x), int(self.player_y - cam_y), garlic_range, 10)
+        aura_weapon_id = 13 if 13 in self.weapon_inventory else 5 if 5 in self.weapon_inventory else None
+        if aura_weapon_id is not None:
+            garlic_range = int(self.get_weapon_stats(aura_weapon_id)["range"])
+            aura_color = 11 if aura_weapon_id == 13 else 10
+            pyxel.circb(int(self.player_x - cam_x), int(self.player_y - cam_y), garlic_range, aura_color)
 
         for zone in self.damage_zone_list:
             if zone["timer"] % 6 < 3:
@@ -1769,6 +2428,10 @@ class App:
                 width = 8
                 height = 8
                 color = 4
+            elif projectile["type"] == "death_spiral":
+                width = 10
+                height = 10
+                color = 5
             elif projectile["type"] == "holy_water":
                 width = 6
                 height = 6
@@ -1777,10 +2440,26 @@ class App:
                 width = 6
                 height = 6
                 color = 10
+            elif projectile["type"] == "hyperlove":
+                width = 8
+                height = 8
+                color = 9
+            elif projectile["type"] == "holy_wand":
+                width = 5
+                height = 5
+                color = 7
+            elif projectile["type"] == "hellfire":
+                width = 7
+                height = 7
+                color = 9
             elif projectile["type"] == "fire_wand":
                 width = 5
                 height = 5
                 color = 8
+            elif projectile["type"] == "thousand_edge":
+                width = 8
+                height = 4
+                color = 11
             else:
                 width = 8
                 height = 4
@@ -1799,7 +2478,6 @@ class App:
         cam_x = self.player_x - 80
         cam_y = self.player_y - 60
         biome, secondary_biome, blend_ratio = self.get_current_biome()
-        self.biome = biome
         biome_tiles = [SPR_TILE_GRASS, SPR_TILE_DESERT, SPR_TILE_CAVE, SPR_TILE_CASTLE]
         tile_w, tile_h = 16, 16
         start_tx = int(cam_x // tile_w) - 1
@@ -1856,22 +2534,124 @@ class App:
             pyxel.text(start_x + 5, y + 15, choice["desc"], 13)
 
     def draw_paused(self):
-        pyxel.cls(1)
-        pyxel.text(64, 56, "PAUSED", 7)
+        self.draw_playing()
+        for y in range(0, 120, 2):
+            pyxel.line(0, y, 160, y, 0)
         self.draw_hud()
+        if self.prev_state == "BOSS":
+            self.draw_boss_hp_bar()
+        self._draw_centered_text("PAUSED", 46, 7)
+        self._draw_centered_text("Arrows/WASD:Move  Space:Dash  ESC:Pause", 110, 7)
 
     def draw_boss(self):
-        pyxel.cls(0)
-        pyxel.text(64, 56, "BOSS", 7)
-        self.draw_hud()
+        self.draw_playing()
+        self.draw_boss_hp_bar()
+
+    def draw_boss_hp_bar(self):
+        if not self.boss_active or self.boss_max_hp <= 0:
+            return
+        bar_x = 20
+        bar_y = 110
+        bar_w = 120
+        hp_w = int(bar_w * self.boss_hp / self.boss_max_hp)
+        pyxel.rect(bar_x, bar_y, bar_w, 6, 0)
+        pyxel.rect(bar_x, bar_y, max(0, hp_w), 6, 2)
+        pyxel.rectb(bar_x - 1, bar_y - 1, bar_w + 2, 8, 7)
+        self._draw_centered_text("DEATH", 101, 7)
 
     def draw_game_over(self):
         pyxel.cls(0)
-        pyxel.text(52, 56, "GAME OVER", 7)
+        pyxel.rectb(4, 4, 152, 112, 8)
+        pyxel.rectb(6, 6, 148, 108, 2)
+        
+        self._draw_centered_text("GAME OVER", 10, 8)
+        
+        total_sec = self.timer_frames // 30
+        mins = total_sec // 60
+        secs = total_sec % 60
+        
+        pyxel.text(15, 22, f"Time: {mins:02d}:{secs:02d}", 7)
+        pyxel.text(85, 22, f"Level: Lv.{self.player_level}", 7)
+        pyxel.text(15, 32, f"Kills: {self.kills}", 7)
+        pyxel.text(85, 32, f"Score: {getattr(self, 'final_score', 0)}", 7)
+        
+        if getattr(self, "is_new_high_score", False) and pyxel.frame_count % 16 < 8:
+            pyxel.text(15, 42, "NEW RECORD!", 10)
+        else:
+            pyxel.text(15, 42, f"High Score: {self.high_score}", 6)
+            
+        pyxel.text(15, 54, "Weapons:", 7)
+        weapon_names = []
+        for w_id in self.weapon_inventory:
+            if w_id < 8:
+                weapon_names.append(WEAPON_DATA[w_id]["name"])
+            else:
+                weapon_names.append(EVOLVED_WEAPON_DATA[w_id]["name"])
+        
+        for i, name in enumerate(weapon_names[:6]):
+            col = i % 3
+            row = i // 3
+            pyxel.text(15 + col * 50, 62 + row * 8, name[:10], 6)
+            
+        pyxel.text(15, 78, "Passives:", 7)
+        passive_names = []
+        for p in self.passive_inventory:
+            passive_names.append(PASSIVE_POOL[p["id"]]["name"])
+            
+        for i, name in enumerate(passive_names[:6]):
+            col = i % 3
+            row = i // 3
+            pyxel.text(15 + col * 50, 86 + row * 8, name[:10], 12)
+            
+        if pyxel.frame_count % 30 < 15:
+            self._draw_centered_text("PRESS ENTER TO RETURN TO TITLE", 108, 7)
 
     def draw_victory(self):
         pyxel.cls(0)
-        pyxel.text(60, 56, "VICTORY", 7)
+        pyxel.rectb(4, 4, 152, 112, 10)
+        pyxel.rectb(6, 6, 148, 108, 7)
+        
+        self._draw_centered_text("VICTORY!", 10, 10)
+        
+        total_sec = self.timer_frames // 30
+        mins = total_sec // 60
+        secs = total_sec % 60
+        
+        pyxel.text(15, 22, f"Time: {mins:02d}:{secs:02d}", 7)
+        pyxel.text(85, 22, f"Level: Lv.{self.player_level}", 7)
+        pyxel.text(15, 32, f"Kills: {self.kills}", 7)
+        pyxel.text(85, 32, f"Score: {getattr(self, 'final_score', 0)}", 10)
+        
+        if getattr(self, "is_new_high_score", False) and pyxel.frame_count % 16 < 8:
+            pyxel.text(15, 42, "NEW RECORD!", 10)
+        else:
+            pyxel.text(15, 42, f"High Score: {self.high_score}", 10)
+            
+        pyxel.text(15, 54, "Weapons:", 7)
+        weapon_names = []
+        for w_id in self.weapon_inventory:
+            if w_id < 8:
+                weapon_names.append(WEAPON_DATA[w_id]["name"])
+            else:
+                weapon_names.append(EVOLVED_WEAPON_DATA[w_id]["name"])
+        
+        for i, name in enumerate(weapon_names[:6]):
+            col = i % 3
+            row = i // 3
+            pyxel.text(15 + col * 50, 62 + row * 8, name[:10], 6)
+            
+        pyxel.text(15, 78, "Passives:", 7)
+        passive_names = []
+        for p in self.passive_inventory:
+            passive_names.append(PASSIVE_POOL[p["id"]]["name"])
+            
+        for i, name in enumerate(passive_names[:6]):
+            col = i % 3
+            row = i // 3
+            pyxel.text(15 + col * 50, 86 + row * 8, name[:10], 12)
+            
+        if pyxel.frame_count % 30 < 15:
+            self._draw_centered_text("PRESS ENTER TO RETURN TO TITLE", 108, 7)
 
     def draw_hud(self):
         # HP bar background (dark red)
@@ -1888,7 +2668,7 @@ class App:
         pyxel.text(54, 7, f"Lv.{self.player_level}", 7)
         pyxel.blt(2, 13, 0, SPR_GEM[0], SPR_GEM[1], 16, 16, colkey=0)
         pyxel.rect(20, 18, 40, 4, 1)
-        cooldown_w = int(40 * self.dash_cooldown / 60)
+        cooldown_w = int(40 * self.dash_cooldown / DASH_COOLDOWN_FRAMES)
         pyxel.rect(20, 18, cooldown_w, 4, 12)
         # Timer MM:SS (top right)
         total_sec = self.timer_frames // 30
