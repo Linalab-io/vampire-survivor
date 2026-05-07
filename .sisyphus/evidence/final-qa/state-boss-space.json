@@ -1,0 +1,1 @@
+{"frame": 8, "pyxel": {"width": 160, "height": 120}, "app_type": "App", "attributes": {"state": "BOSS", "timer_frames": 54009, "prev_state": "TITLE", "boss_active": true, "boss_hp": 500, "dash_cooldown": 55, "dash_invincible": 5}}

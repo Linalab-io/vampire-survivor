@@ -1,0 +1,3 @@
+- Added CHARACTER_DATA and DIFFICULTY_DATA constants to main.py
+- Implemented character and difficulty selection screens with navigation
+- Applied difficulty multipliers to enemy stats, spawn rate, and XP thresholds

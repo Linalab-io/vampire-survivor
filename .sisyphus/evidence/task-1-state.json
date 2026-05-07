@@ -1,0 +1,11 @@
+{
+  "frame": 30,
+  "app_class": "App",
+  "state": "TITLE",
+  "timer_frames": 31,
+  "player_hp": 100,
+  "pyxel": {
+    "width": 160,
+    "height": 120
+  }
+}

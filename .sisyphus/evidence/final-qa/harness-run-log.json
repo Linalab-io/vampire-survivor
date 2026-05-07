@@ -1,0 +1,56 @@
+[
+  {
+    "cmd": "uvx --with pyxel-mcp python -m pyxel_mcp.harness main.py .sisyphus/evidence/final-qa/title-screen.png 30 2",
+    "returncode": 0,
+    "stdout": "pyxel.sound(snd) is deprecated. Use pyxel.sounds[snd] instead.\n",
+    "stderr": ""
+  },
+  {
+    "cmd": "uvx --with pyxel-mcp python -m pyxel_mcp.input_harness main.py .sisyphus/evidence/final-qa 10 2 .sisyphus/evidence/final-qa/char-select-input.json",
+    "returncode": 0,
+    "stdout": "pyxel.sound(snd) is deprecated. Use pyxel.sounds[snd] instead.\n",
+    "stderr": ""
+  },
+  {
+    "cmd": "uvx --with pyxel-mcp python -m pyxel_mcp.input_harness main.py .sisyphus/evidence/final-qa 20 2 .sisyphus/evidence/final-qa/diff-select-input.json",
+    "returncode": 0,
+    "stdout": "pyxel.sound(snd) is deprecated. Use pyxel.sounds[snd] instead.\n",
+    "stderr": ""
+  },
+  {
+    "cmd": "uvx --with pyxel-mcp python -m pyxel_mcp.input_harness main.py .sisyphus/evidence/final-qa 35 2 .sisyphus/evidence/final-qa/gameplay-input.json",
+    "returncode": 0,
+    "stdout": "pyxel.sound(snd) is deprecated. Use pyxel.sounds[snd] instead.\n",
+    "stderr": ""
+  },
+  {
+    "cmd": "uvx --with pyxel-mcp python -m pyxel_mcp.input_harness main.py .sisyphus/evidence/final-qa 90 2 .sisyphus/evidence/final-qa/movement-input.json",
+    "returncode": 0,
+    "stdout": "pyxel.sound(snd) is deprecated. Use pyxel.sounds[snd] instead.\n",
+    "stderr": ""
+  },
+  {
+    "cmd": "uvx --with pyxel-mcp python -m pyxel_mcp.input_harness main.py .sisyphus/evidence/final-qa 55 2 .sisyphus/evidence/final-qa/paused-input.json",
+    "returncode": 0,
+    "stdout": "pyxel.sound(snd) is deprecated. Use pyxel.sounds[snd] instead.\n",
+    "stderr": ""
+  },
+  {
+    "cmd": "uvx --with pyxel-mcp python -m pyxel_mcp.input_harness .sisyphus/evidence/final-qa/qa_level_up.py .sisyphus/evidence/final-qa 8 2 .sisyphus/evidence/final-qa/gameplay-input.json",
+    "returncode": 0,
+    "stdout": "pyxel.sound(snd) is deprecated. Use pyxel.sounds[snd] instead.\n",
+    "stderr": ""
+  },
+  {
+    "cmd": "uvx --with pyxel-mcp python -m pyxel_mcp.input_harness main.py .sisyphus/evidence/final-qa 60 2 .sisyphus/evidence/final-qa/dash-input.json",
+    "returncode": 0,
+    "stdout": "pyxel.sound(snd) is deprecated. Use pyxel.sounds[snd] instead.\n",
+    "stderr": ""
+  },
+  {
+    "cmd": "uvx --with pyxel-mcp python -m pyxel_mcp.input_harness main.py .sisyphus/evidence/final-qa 700 2 .sisyphus/evidence/final-qa/boss-flow-input.json",
+    "returncode": 0,
+    "stdout": "pyxel.sound(snd) is deprecated. Use pyxel.sounds[snd] instead.\n",
+    "stderr": ""
+  }
+]
